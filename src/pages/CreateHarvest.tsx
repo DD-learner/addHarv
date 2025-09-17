@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { CalendarIcon, Loader2, Package, MapPin, Leaf, CheckCircle } from 'lucide-react';
+import { CalendarIcon, Loader2, Package, MapPin, Leaf, CheckCircle, Navigation } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from '@/hooks/use-toast';
 import { harvestService, Harvest } from '@/services/api';
@@ -34,6 +34,7 @@ type HarvestForm = z.infer<typeof harvestSchema>;
 const CreateHarvest = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const [locationLoading, setLocationLoading] = useState(false);
   const [createdHarvest, setCreatedHarvest] = useState<Harvest | null>(null);
   const [showQR, setShowQR] = useState(false);
 
@@ -129,6 +130,93 @@ const CreateHarvest = () => {
 
   const handleGoHome = () => {
     navigate('/');
+  };
+
+  // Auto-detect location using browser geolocation API
+  const detectLocation = async () => {
+    if (!navigator.geolocation) {
+      toast({
+        title: "Geolocation not supported",
+        description: "Your browser doesn't support location detection.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setLocationLoading(true);
+    
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 300000 // 5 minutes
+        });
+      });
+
+      const { latitude, longitude } = position.coords;
+      
+      // Use reverse geocoding to get address
+      try {
+        const response = await fetch(
+          `https://api.opencagedata.com/geocode/v1/json?q=${latitude}+${longitude}&key=demo&limit=1`
+        );
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.results && data.results.length > 0) {
+            const result = data.results[0];
+            const address = result.formatted || `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+            setValue('location', address);
+            
+            toast({
+              title: "Location detected",
+              description: "Current location has been automatically filled.",
+            });
+          } else {
+            // Fallback to coordinates if geocoding fails
+            setValue('location', `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+            toast({
+              title: "Location detected",
+              description: "GPS coordinates have been automatically filled.",
+            });
+          }
+        } else {
+          // Fallback to coordinates if geocoding service fails
+          setValue('location', `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+          toast({
+            title: "Location detected",
+            description: "GPS coordinates have been automatically filled.",
+          });
+        }
+      } catch (geocodeError) {
+        // Fallback to coordinates if geocoding fails
+        setValue('location', `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+        toast({
+          title: "Location detected",
+          description: "GPS coordinates have been automatically filled.",
+        });
+      }
+      
+    } catch (error: any) {
+      let errorMessage = "Unable to detect location.";
+      
+      if (error.code === 1) {
+        errorMessage = "Location access denied. Please enable location permissions.";
+      } else if (error.code === 2) {
+        errorMessage = "Location unavailable. Please check your GPS settings.";
+      } else if (error.code === 3) {
+        errorMessage = "Location request timed out. Please try again.";
+      }
+      
+      toast({
+        title: "Location detection failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setLocationLoading(false);
+    }
   };
 
   // Units for different crop types
@@ -317,12 +405,28 @@ const CreateHarvest = () => {
                     <MapPin className="h-4 w-4" />
                     <span>Field/Location</span>
                   </Label>
-                  <Input
-                    id="location"
-                    placeholder="Enter field name or location (e.g., North Field, Greenhouse 2)"
-                    {...register('location')}
-                    className={errors.location ? 'border-destructive' : ''}
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="location"
+                      placeholder="Enter field name or location (e.g., North Field, Greenhouse 2)"
+                      {...register('location')}
+                      className={cn("flex-1", errors.location ? 'border-destructive' : '')}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={detectLocation}
+                      disabled={locationLoading}
+                      title="Auto-detect current location"
+                    >
+                      {locationLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Navigation className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
                   {errors.location && (
                     <p className="text-sm text-destructive">{errors.location.message}</p>
                   )}
